@@ -91,3 +91,5 @@ next-env.d.ts
 /src/generated
 
 *.env
+
+node_modules/
