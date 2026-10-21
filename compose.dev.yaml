@@ -1,0 +1,63 @@
+# Dev overrides: `docker compose -f compose.yaml -f compose.dev.yaml up --watch` (= `make dev`).
+# sync   = copy edited files into the running container (Next.js / tsx / Flutter reload them)
+# rebuild = dependency or schema change, rebuild the image
+
+services:
+  api:
+    build:
+      target: dev
+    environment:
+      NODE_ENV: development
+    restart: "no"
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+          ignore:
+            - generated/
+        - action: sync
+          path: ./backend/public
+          target: /app/public
+        - action: rebuild
+          path: ./backend/package.json
+        - action: rebuild
+          path: ./backend/prisma/schema.prisma
+        - action: sync+restart
+          path: ./backend/next.config.ts
+          target: /app/next.config.ts
+
+  worker:
+    build:
+      target: dev
+    command: ["npm", "run", "worker:dev"]
+    environment:
+      NODE_ENV: development
+    restart: "no"
+    develop:
+      watch:
+        - action: sync
+          path: ./backend/src
+          target: /app/src
+          ignore:
+            - generated/
+        - action: rebuild
+          path: ./backend/package.json
+        - action: rebuild
+          path: ./backend/prisma/schema.prisma
+
+  web:
+    build:
+      target: dev
+    environment:
+      API_URL: http://localhost:3000
+    ports: !override
+      - "8080:8080"
+    restart: "no"
+    develop:
+      watch:
+        - action: sync
+          path: ./frontend/lib
+          target: /app/lib
+        - action: rebuild
+          path: ./frontend/pubspec.yaml

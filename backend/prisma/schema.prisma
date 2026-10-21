@@ -1,0 +1,198 @@
+// Data model from docs/TRD.md §5.
+// Connection URLs live in prisma.config.ts (migrations) and src/lib/prisma.ts (runtime).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Language {
+  en
+  ms
+  zh
+}
+
+enum Platform {
+  youtube
+  facebook
+  instagram
+}
+
+enum AccountStatus {
+  active
+  expired // token expired, user must reconnect
+  revoked // user disconnected or platform revoked access
+}
+
+enum PostTargetStatus {
+  scheduled
+  publishing
+  published
+  failed
+}
+
+enum SnapshotType {
+  h48    @map("48h")
+  d7     @map("7d")
+  latest
+}
+
+// id = Supabase auth.users.id (set from the verified JWT, not generated here)
+model User {
+  id        String   @id @db.Uuid
+  email     String   @unique
+  language  Language @default(en)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand Brand?
+
+  @@map("users")
+}
+
+model Brand {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @unique @map("user_id") @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  socialAccounts SocialAccount[]
+  posts          Post[]
+  weeklyInsights WeeklyInsight[]
+  mediaKits      MediaKit[]
+
+  @@map("brands")
+}
+
+model SocialAccount {
+  id            String        @id @default(uuid()) @db.Uuid
+  brandId       String        @map("brand_id") @db.Uuid
+  platform      Platform
+  externalId    String        @map("external_id") // Facebook: Page ID
+  displayName   String?       @map("display_name")
+  accessToken   String        @map("access_token") // encrypted at app layer
+  refreshToken  String?       @map("refresh_token") // encrypted at app layer
+  expiresAt     DateTime?     @map("expires_at") @db.Timestamptz
+  status        AccountStatus @default(active)
+  followerCount Int?          @map("follower_count") // for Media Kit
+  lastSyncedAt  DateTime?     @map("last_synced_at") @db.Timestamptz
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime      @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand       Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  postTargets PostTarget[]
+
+  @@unique([brandId, platform, externalId])
+  @@map("social_accounts")
+}
+
+model Post {
+  id             String    @id @default(uuid()) @db.Uuid
+  brandId        String    @map("brand_id") @db.Uuid
+  captionBase    String    @map("caption_base")
+  mediaUrl       String    @map("media_url")
+  mediaDurationS Int       @map("media_duration_s")
+  aspectRatio    String    @map("aspect_ratio") // e.g. "9:16"
+  scheduledAt    DateTime? @map("scheduled_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  brand   Brand        @relation(fields: [brandId], references: [id], onDelete: Cascade)
+  targets PostTarget[]
+
+  @@index([brandId, scheduledAt])
+  @@map("posts")
+}
+
+// One row per platform a post goes to
+model PostTarget {
+  id              String           @id @default(uuid()) @db.Uuid
+  postId          String           @map("post_id") @db.Uuid
+  socialAccountId String           @map("social_account_id") @db.Uuid
+  captionOverride String?          @map("caption_override")
+  status          PostTargetStatus @default(scheduled)
+  externalPostId  String?          @map("external_post_id")
+  error           String?
+  attempts        Int              @default(0)
+  publishedAt     DateTime?        @map("published_at") @db.Timestamptz
+  createdAt       DateTime         @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  post            Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  socialAccount   SocialAccount    @relation(fields: [socialAccountId], references: [id], onDelete: Cascade)
+  metricSnapshots MetricSnapshot[]
+  contentScores   ContentScore[]
+
+  @@unique([postId, socialAccountId])
+  @@index([status])
+  @@map("post_targets")
+}
+
+// Append-only: never update rows, insert a new one
+model MetricSnapshot {
+  id           String       @id @default(uuid()) @db.Uuid
+  postTargetId String       @map("post_target_id") @db.Uuid
+  snapshotType SnapshotType @map("snapshot_type")
+  views        Int
+  likes        Int
+  comments     Int
+  shares       Int
+  saves        Int? // not every platform reports saves
+  fetchedAt    DateTime     @default(now()) @map("fetched_at") @db.Timestamptz
+
+  postTarget PostTarget @relation(fields: [postTargetId], references: [id], onDelete: Cascade)
+
+  @@index([postTargetId, snapshotType, fetchedAt])
+  @@map("metric_snapshots")
+}
+
+// Recalculable from metric_snapshots when weights change
+model ContentScore {
+  id             String       @id @default(uuid()) @db.Uuid
+  postTargetId   String       @map("post_target_id") @db.Uuid
+  snapshotType   SnapshotType @map("snapshot_type")
+  er             Decimal      @db.Decimal(8, 6) // engagement rate
+  score          Decimal      @db.Decimal(6, 2)
+  isProvisional  Boolean      @default(false) @map("is_provisional")
+  weightsVersion Int          @map("weights_version")
+  computedAt     DateTime     @default(now()) @map("computed_at") @db.Timestamptz
+
+  postTarget PostTarget @relation(fields: [postTargetId], references: [id], onDelete: Cascade)
+
+  @@unique([postTargetId, snapshotType, weightsVersion])
+  @@map("content_scores")
+}
+
+// FR-12: Monday AI summary
+model WeeklyInsight {
+  id        String   @id @default(uuid()) @db.Uuid
+  brandId   String   @map("brand_id") @db.Uuid
+  weekStart DateTime @map("week_start") @db.Date
+  language  Language
+  summary   String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@unique([brandId, weekStart, language])
+  @@map("weekly_insights")
+}
+
+// FR-17: public, revocable Media Kit link
+model MediaKit {
+  id        String    @id @default(uuid()) @db.Uuid
+  brandId   String    @map("brand_id") @db.Uuid
+  slug      String    @unique // public URL token
+  revokedAt DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  brand Brand @relation(fields: [brandId], references: [id], onDelete: Cascade)
+
+  @@map("media_kits")
+}
