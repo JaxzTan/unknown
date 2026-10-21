@@ -20,8 +20,16 @@ frontend/
 ├── test/
 │   └── widget_test.dart # smoke test
 ├── android/ ios/ macos/ linux/ windows/ web/   # platform runners
+├── docker/
+│   ├── dev.sh           # Docker dev: flutter run web-server + auto hot reload on lib/ change
+│   └── nginx.conf       # Docker prod: serves build/web, SPA fallback
+├── Dockerfile           # stages: dev (:8080), web (nginx) — see docs/docker.md
+├── .dockerignore
 └── pubspec.yaml         # deps: http
 ```
+
+Generated, gitignored: `build/`, `.dart_tool/`, `*/Flutter/ephemeral/`, `ios/Flutter/Generated.xcconfig`, `android/local.properties`.
+Kept in git (Flutter default): `*/flutter/generated_plugin_registrant.*`, `macos/Flutter/GeneratedPluginRegistrant.swift`, `.metadata`.
 
 ## Backend URL
 
@@ -32,6 +40,7 @@ Set at build time with `--dart-define=API_URL=...` and read via `String.fromEnvi
 | iOS sim / macOS / web     | `http://localhost:3000` (default) |
 | Android emulator          | `http://10.0.2.2:3000`      |
 | Physical device           | `http://<your-LAN-IP>:3000` |
+| Docker (`make dev` / `make`) | `http://localhost:3000` (set in `compose.yaml`) |
 
 The macOS entitlements include `com.apple.security.network.client` so the app can make outbound requests.
 

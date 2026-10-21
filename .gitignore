@@ -9,9 +9,10 @@
 .history
 node_modules/
 
-# env files (secrets — never commit)
+# env files (secrets — never commit); the template is the only exception
 .env*
 *.env
+!.env.example
 
 # IntelliJ / Android Studio
 *.iml
