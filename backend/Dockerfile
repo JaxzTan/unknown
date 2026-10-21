@@ -24,7 +24,15 @@ FROM deps AS build
 COPY . .
 RUN npm run build
 
+# ---- worker: shares the codebase, runs with tsx ----
+FROM deps AS worker
+ENV NODE_ENV=production
+COPY . .
+USER node
+CMD ["npm", "run", "worker"]
+
 # ---- api: minimal standalone Next.js server ----
+# Kept last: hosts that build without a target (Railway) get the API by default
 FROM base AS api
 ENV NODE_ENV=production PORT=3000 HOSTNAME=0.0.0.0
 COPY --from=build /app/public ./public
@@ -33,10 +41,3 @@ COPY --from=build /app/.next/static ./.next/static
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
-
-# ---- worker: shares the codebase, runs with tsx ----
-FROM deps AS worker
-ENV NODE_ENV=production
-COPY . .
-USER node
-CMD ["npm", "run", "worker"]
